@@ -255,3 +255,26 @@ def test_expected_version_conflict_is_rejected():
     result = _use(engine, instance, FixedRng(10), expected_version=99)
     assert result["ok"] is False
     assert _canonical(instance)["resources"]["class"]["second_wind"]["current"] == 2
+
+
+def test_available_intents_accepts_raw_session_uids():
+    # The WebUI service layer calls available_intents with the bare session
+    # uid (like the combat engine); the projection must not silently vanish.
+    _, instance, engine = _instance(hp=4)
+    actions = engine.available_intents(instance, "gm")
+    assert any(item["type"] == "exploration.use_class_feature" for item in actions)
+
+
+def test_feature_intent_accepts_raw_actor_id_submission():
+    _, instance, engine = _instance(hp=4)
+    result = engine.resolve_intent(instance, {
+        "intent_id": "exp-raw-actor", "type": "exploration.use_class_feature",
+        "expected_version": _version(instance), "submitted_by": "gm",
+        "actor_id": "gm", "capability_id": "second_wind",
+    }, FixedRng(10))
+    assert result["ok"] is True
+    applied = engine.apply_batch(instance, result["event_batch"])
+    assert applied["applied"] is True
+    canonical = _canonical(instance)
+    assert canonical["resources"]["hp"] == 12
+    assert canonical["resources"]["class"]["second_wind"]["current"] == 1

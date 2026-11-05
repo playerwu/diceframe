@@ -192,8 +192,25 @@ class Dnd2024ExplorationEngine:
             projections.append(view.to_dict())
         return projections
 
+    @staticmethod
+    def _normalize_actor_id(instance: Any, actor_id: str) -> str:
+        """接受会话裸 uid 或 canonical ``player:`` 引用，统一成后者。
+
+        WebUI 服务层用裸 uid 调 ``available_intents``（与战斗引擎一致），
+        而意图 payload 带前缀；两种形态都必须投影/校验一致，否则入口与
+        提交会互相看不见。
+        """
+
+        raw = str(actor_id or "")
+        if raw.startswith("player:"):
+            return raw
+        if raw and raw in instance.players:
+            return f"player:{raw}"
+        return raw
+
     def available_intents(self, instance: Any, actor_id: str) -> list[dict[str, Any]]:
         state = self._state(instance)
+        actor_id = self._normalize_actor_id(instance, actor_id)
         if state["combat"].get("status") == "active":
             return []
         if not actor_id.startswith("player:") or actor_id.removeprefix("player:") not in instance.players:
@@ -265,7 +282,7 @@ class Dnd2024ExplorationEngine:
             )
         if state["combat"].get("status") == "active":
             raise ExplorationIntentError("exploration casting requires no active combat")
-        actor_id = str(intent.get("actor_id") or "")
+        actor_id = self._normalize_actor_id(instance, str(intent.get("actor_id") or ""))
         uid = actor_id.removeprefix("player:")
         if not actor_id.startswith("player:") or uid not in instance.players:
             raise ExplorationIntentError("exploration casting is player-only in this phase")
@@ -383,7 +400,7 @@ class Dnd2024ExplorationEngine:
             self._validate(instance, intent)
         except ExplorationIntentError as exc:
             return {"ok": False, "code": "INVALID_INTENT", "error": str(exc)}
-        actor_id = str(intent["actor_id"])
+        actor_id = self._normalize_actor_id(instance, str(intent["actor_id"]))
         if str(intent.get("type") or "") == "exploration.use_class_feature":
             return self._resolve_use_class_feature(instance, intent, rng, actor_id)
         spell_ref = str(intent["spell_ref"])

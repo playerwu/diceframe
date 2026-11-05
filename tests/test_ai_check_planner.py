@@ -1437,3 +1437,66 @@ def test_price_source_none_keeps_unpriced_behavior() -> None:
     assert offers == []
     assert unpriced == [{"payer_uid": "p1", "target": "面包", "quantity": 1}]
     assert errors == []
+
+
+def test_delegate_name_marks_unambiguous_npc_directed_checks() -> None:
+    instance = make_instance()
+    instance.action_queue[0]["text"] = "让薇恩松半寸弩带试压力"
+    instance.npcs = {
+        "venn": {"name": "薇恩", "character_name": "薇恩"},
+    }
+    planned, errors = normalize_check_specs(instance, make_rule(), [{
+        "player": "p1", "attribute": "dex", "target": 15,
+    }])
+
+    assert errors == []
+    assert planned[0][1]["delegate_name"] == "薇恩"
+    # 展示标注不改变检定主体：机制上仍由下令玩家掷骰。
+    assert planned[0][1]["actor_uid"] == "p1"
+    assert planned[0][1]["actor_ref"] == "player:p1"
+
+
+def test_delegate_name_flows_into_the_resolved_check_result() -> None:
+    instance = make_instance()
+    instance.action_queue[0]["text"] = "让薇恩松半寸弩带试压力"
+    instance.npcs = {"venn": {"name": "薇恩", "character_name": "薇恩"}}
+    planned, errors = normalize_check_specs(instance, make_rule(), [{
+        "player": "p1", "attribute": "dex", "target": 15,
+    }])
+    assert errors == []
+
+    action = dict(instance.action_queue[0])
+    action["check_request"] = planned[0][1]
+    action["dice_value"] = 11
+    result = resolve_check_request(instance, action, make_rule())
+    assert result is not None
+    assert result["delegate_name"] == "薇恩"
+    assert result["actor_uid"] == "p1"
+
+
+def test_delegate_name_is_omitted_for_opposed_checks_against_the_npc() -> None:
+    instance = make_instance()
+    instance.action_queue[0]["text"] = "我与薇恩掰手腕"
+    instance.npcs = {"venn": {"name": "薇恩", "character_name": "薇恩"}}
+    planned, errors = normalize_check_specs(instance, make_rule(), [{
+        "player": "p1", "attribute": "str", "target": 12, "opponent": "薇恩",
+    }])
+
+    assert errors == []
+    assert planned[0][1]["opponent"] == "npc:venn"
+    assert "delegate_name" not in planned[0][1]
+
+
+def test_delegate_name_requires_an_unambiguous_npc() -> None:
+    instance = make_instance()
+    instance.action_queue[0]["text"] = "让薇恩扶着卡莱布过桥"
+    instance.npcs = {
+        "venn": {"name": "薇恩", "character_name": "薇恩"},
+        "caleb": {"name": "卡莱布", "character_name": "卡莱布"},
+    }
+    planned, errors = normalize_check_specs(instance, make_rule(), [{
+        "player": "p1", "attribute": "dex", "target": 12,
+    }])
+
+    assert errors == []
+    assert "delegate_name" not in planned[0][1]

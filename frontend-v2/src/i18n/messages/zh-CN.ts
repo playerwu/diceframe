@@ -962,6 +962,7 @@ export const zhCN = {
   checkPlannerSources: '判定来源：{detail}',
   checkSuccessLevels: '普通 ≤ {normal} · 困难 ≤ {hard} · 极难 ≤ {extreme}',
   checkCardLabel: '{name} 的检定结果',
+  checkDelegateNote: '行动涉及 {npc}；检定按 {actor} 结算',
   checkOpponent: '对手',
   checkAssist: '协助：{players}',
   roundDivider: '第 {round} 轮',

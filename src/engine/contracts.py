@@ -86,6 +86,7 @@ class CheckResult(TypedDict, total=False):
     label: str
     actor_uid: str
     actor_name: str
+    delegate_name: str
     dice: str
     attribute: str | None
     skill: str

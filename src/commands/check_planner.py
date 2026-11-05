@@ -794,6 +794,17 @@ def normalize_check_specs(
             "assist": assistants,
             "planner_source": "llm_tool_repaired" if repaired else "llm_tool",
         }
+        # 展示性归属标注：行动明确指向唯一无歧义 NPC、检定主体又是行动玩家本人
+        # 时，带上该 NPC 名字，让前端说明「检定按行动者结算」（指令类行动的执行
+        # 者在叙事里，机制上仍由下令玩家掷骰）。纯展示：不影响 actor、加值或结
+        # 果；对抗检定（opponent 即该 NPC）与队友委派不重复标注。
+        if not is_companion:
+            delegate_npc = _npc_context(
+                instance, uid,
+                str(action.get("text") or ""), str(action.get("target_text") or ""),
+            )
+            if delegate_npc is not None and opponent != delegate_npc["reference"]:
+                request["delegate_name"] = delegate_npc["name"]
         planned.append((action_by_uid[uid], request))
         seen_players.add(uid)
     return planned, errors

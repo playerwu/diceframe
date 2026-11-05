@@ -154,6 +154,7 @@ onUnmounted(() => { stopRevealAnimation(); if (trayTimer !== undefined) window.c
       <span class="check-die" aria-hidden="true">{{ revealed ? check.roll : '✦' }}</span>
       <div>
         <strong>{{ check.label || t('checkLabel') }} · {{ check.actor_name }}</strong>
+        <small v-if="check.delegate_name" class="check-delegate-note">{{ t('checkDelegateNote', { npc: check.delegate_name, actor: check.actor_name || check.actor_uid || '' }) }}</small>
         <small>{{ check.dice || 'd20' }} · {{ check.attribute || check.skill || t('checkAttribute') }}</small>
         <small v-if="modeBadge" class="check-mode-badge" :class="check.advantage_mode">{{ modeBadge }}</small>
       </div>
@@ -216,6 +217,7 @@ onUnmounted(() => { stopRevealAnimation(); if (trayTimer !== undefined) window.c
 .check-reveal-head{display:grid;grid-template-columns:44px minmax(0,1fr) auto;align-items:center;gap:10px}
 .check-reveal-head strong{display:block;color:var(--df-accent-strong)}
 .check-reveal-head small{display:block;margin-top:2px;color:var(--df-text-muted)}
+.check-reveal-head .check-delegate-note{opacity:.85}
 .check-reveal-head .check-mode-badge{display:inline-flex;width:fit-content;max-width:100%;margin-top:3px;padding:1px 7px;border:1px solid var(--df-border-soft);border-radius:8px;font-size:11px;font-weight:700}
 .check-mode-badge.advantage{color:var(--df-success);border-color:var(--df-success)}
 .check-mode-badge.disadvantage{color:var(--df-danger);border-color:var(--df-danger)}

@@ -677,6 +677,7 @@ def resolve_check_request(
         "actor_uid": uid,
         "actor_ref": actor_ref or None,
         "actor_name": actor_name,
+        "delegate_name": str(request.get("delegate_name") or "") or None,
         "dice": dice_system,
         "skill": skill_name,
         "roll": roll_value,

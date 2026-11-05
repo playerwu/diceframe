@@ -962,6 +962,7 @@ export const en = {
   checkPlannerSources: 'Resolution sources: {detail}',
   checkSuccessLevels: 'Regular ≤ {normal} · Hard ≤ {hard} · Extreme ≤ {extreme}',
   checkCardLabel: 'Check result for {name}',
+  checkDelegateNote: 'Action involves {npc}; the check resolves under {actor}',
   checkOpponent: 'Opponent',
   checkAssist: 'Assisted by: {players}',
   roundDivider: 'Round {round}',

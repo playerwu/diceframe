@@ -202,3 +202,29 @@ describe('CheckRevealCard', () => {
     vi.useRealTimers()
   })
 })
+
+describe('CheckRevealCard delegate attribution', () => {
+  beforeEach(() => { i18n.global.locale.value = 'zh-CN' })
+
+  it('explains that an NPC-directed action still resolves under the acting player', () => {
+    const check = {
+      check_id: 'd1', actor_uid: 'p1', actor_name: '塞拉夫', delegate_name: '薇恩',
+      label: '敏捷检定', dice: 'd20', roll: 13, rolls: [13], modifier: 2, total: 15,
+      verdict: '成功',
+    }
+    const wrapper = mount(CheckRevealCard, { global: { plugins: [i18n] }, props: { check, clickMode: false } })
+    expect(wrapper.get('.check-delegate-note').text()).toBe('行动涉及 薇恩；检定按 塞拉夫 结算')
+    wrapper.unmount()
+  })
+
+  it('shows no attribution note when the server did not attach one', () => {
+    const check = {
+      check_id: 'd2', actor_uid: 'p1', actor_name: '塞拉夫',
+      label: '敏捷检定', dice: 'd20', roll: 13, rolls: [13], modifier: 2, total: 15,
+      verdict: '成功',
+    }
+    const wrapper = mount(CheckRevealCard, { global: { plugins: [i18n] }, props: { check, clickMode: false } })
+    expect(wrapper.find('.check-delegate-note').exists()).toBe(false)
+    wrapper.unmount()
+  })
+})

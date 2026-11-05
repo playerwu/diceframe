@@ -211,6 +211,8 @@ export interface CheckResult {
   label?: string
   actor_uid?: string
   actor_name?: string
+  /** Display-only: the unambiguous NPC an action is directed at while the check still resolves under the acting player. */
+  delegate_name?: string
   dice?: string
   attribute?: string | null
   attribute_key?: string

@@ -1248,6 +1248,18 @@ export interface RulesetCombatAction extends JsonObject {
   requires_target?: boolean
   /** Declared only for actions whose roll can still spend a Lucky point. */
   lucky_advantage_available?: boolean
+  /** Exploration-safe class-feature capabilities offered while combat is inactive. */
+  capabilities?: RulesetExplorationCapability[]
+}
+
+export interface RulesetExplorationCapability {
+  capability_id: string
+  feature_id?: string
+  label: string
+  available?: boolean
+  blocked_reason?: string
+  requires_target?: boolean
+  costs?: RulesetCapabilityCost[]
 }
 
 export interface RulesetEncounterPreset extends JsonObject {

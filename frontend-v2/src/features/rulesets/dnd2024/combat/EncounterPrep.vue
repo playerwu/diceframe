@@ -12,6 +12,7 @@ import {
 import { planRulesetTemporaryEncounter } from '@/features/rulesets/dnd2024/api'
 import type {
   JsonObject,
+  RulesetExplorationCapability,
   RulesetGameplayResponse,
   RulesetTemporaryEncounter,
   RulesetTemporaryEncounterEnemy,
@@ -45,6 +46,27 @@ const gameplay = computed(() => props.data?.gameplay)
 const combat = computed(() => gameplay.value?.combat)
 const actions = computed(() => props.data?.available_actions || [])
 const action = (type: string) => actions.value.find(item => item.type === type)
+
+// 非战斗职业特性（回气一类）：服务端只在战斗未激活时投影该动作，这里也只
+// 渲染投影出的能力——成本标签照抄战斗面板的格式，数值结算一律在服务端。
+const featureAction = computed(() => action('exploration.use_class_feature'))
+const featureCapabilities = computed(() => featureAction.value?.capabilities || [])
+function featureCostLabel(capability: RulesetExplorationCapability): string {
+  return (capability.costs || []).map(cost => cost.kind === 'resource'
+    ? `${cost.name} ${cost.amount}（${cost.current}/${cost.maximum}）`
+    : cost.name).join(' · ')
+}
+async function useExplorationFeature(capabilityId: string): Promise<void> {
+  const item = featureAction.value
+  if (!item || !capabilityId) return
+  await props.submit({
+    intent_id: intentId(),
+    type: 'exploration.use_class_feature',
+    expected_version: Number(item.expected_version ?? gameplay.value?.state_version ?? 0),
+    actor_id: String(item.actor_id || `player:${props.actorId}`),
+    capability_id: capabilityId,
+  })
+}
 
 const selectedPresetId = ref('')
 const nextEncounterOpen = ref(false)
@@ -388,6 +410,23 @@ async function toggleReady(): Promise<void> {
       </div>
     </template>
     <p v-else>{{ combat?.status === 'ended' ? copy.ended : copy.noCombat }}</p>
+    <!-- 非战斗职业动作：仅当服务端投影 exploration.use_class_feature 时渲染，
+         按钮只提交 capability id，掷骰、扣次数与回血全部由服务端结算。 -->
+    <div v-if="featureCapabilities.length" class="exploration-features" data-testid="exploration-features">
+      <span class="story-bridge-label">{{ copy.explorationFeatures }}</span>
+      <div class="unprepared-actions">
+        <button
+          v-for="capability in featureCapabilities"
+          :key="capability.capability_id"
+          type="button"
+          :disabled="busy"
+          :data-capability="capability.capability_id"
+          @click="useExplorationFeature(capability.capability_id)"
+        >
+          <NIcon :component="SparklesOutline" />{{ capability.label }}<small v-if="featureCostLabel(capability)"> · {{ featureCostLabel(capability) }}</small>
+        </button>
+      </div>
+    </div>
     <div v-if="guidedCombatStep" class="guided-preset">
       <span>{{ copy.guidedEncounter }}</span>
       <strong>{{ guidedCombatSummary?.name || guidedCombatStep.encounter_preset_id }}</strong>
@@ -616,6 +655,8 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px s
 .guided-preset.unprepared strong { color: #f4d9a4; }
 .unprepared-actions { display: flex; column-gap: 14px; row-gap: 10px; flex-wrap: wrap; margin-top: 8px; }
 .unprepared-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 38px; padding: 7px 12px; }
+.exploration-features { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.exploration-features small { opacity: 0.75; }
 .ai-encounter-preview { border-color: #6d6f4a; background: rgb(52 56 24 / 28%); }
 .ai-encounter-summary { display: flex; gap: 8px 14px; flex-wrap: wrap; margin: 2px 0; padding: 0; list-style: none; }
 .ai-encounter-summary li { padding: 4px 10px; border: 1px solid #6d5a35; border-radius: 999px; color: #f0d79c; background: rgb(14 20 24 / 42%); font-size: 13px; }

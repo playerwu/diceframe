@@ -1,10 +1,16 @@
-"""Out-of-combat (exploration) spellcasting for D&D 2024.
+"""Out-of-combat (exploration) actions for D&D 2024.
 
 Exploration casting deliberately does NOT reuse the combat action economy:
 no action/bonus-action/movement accounting, no turn order. What it must
-uphold is the same resource authority as combat — spell slots, concentration,
-and HP changes are applied to the same canonical character state, and every
-cast is recorded as an event with ``context = "exploration"``.
+uphold is the same resource authority as combat — spell slots, class
+resources, concentration, and HP changes are applied to the same canonical
+character state, and every action is recorded as an event with
+``context = "exploration"``.
+
+Class-feature capabilities (Second Wind and other self-contained heals) ride
+the same rails: the declaration supplies the cost and the heal formula, the
+engine rolls and applies the result, and the narrative layer is never asked
+to invent numbers.
 """
 
 from __future__ import annotations
@@ -17,6 +23,7 @@ from src.engine.modules import ruleset_runtime
 from src.rulesets.bundle import LoadedRulesetBundle
 from src.rulesets.dnd2024.character.builder import ability_modifier
 from src.rulesets.dnd2024.combat.action_adapter import (
+    formula_node_from_dice_formula,
     heal_ability_modifier_node,
     roll_damage_node,
     spell_formula_node,
@@ -29,10 +36,19 @@ from src.rulesets.dnd2024.exploration.revive_effects import (
     revive_definition,
     revive_events,
 )
+from src.rulesets.dnd2024.features.resolver import Dnd2024ClassFeatureResolver
 from src.rulesets.dnd2024.spells.catalog import Dnd2024SpellCatalog
 from src.rulesets.events import EventBatchError, apply_event_batch, stable_batch_id
 
-EXPLORATION_INTENT_TYPES = frozenset({"exploration.cast_spell"})
+EXPLORATION_INTENT_TYPES = frozenset({
+    "exploration.cast_spell",
+    "exploration.use_class_feature",
+})
+
+# 探索态没有回合结构，动作经济成本（动作/附赠动作/反应）不构成门槛：能力按
+# "整套动作经济可用"评估，真正起决定作用的只有职业资源余量。战斗内不扣这些
+# 预算，探索态同样不扣。
+_EXPLORATION_ECONOMY = {"action": 1, "bonus_action": 1, "reaction": 1}
 
 # 探索态没有敌方 actor；伤害/豁免/法术攻击模式的确定性结算需要敌对目标，
 # 第一阶段不支持——已知但非确定的法术走 narrative 分支（§32）。
@@ -49,10 +65,12 @@ class Dnd2024ExplorationEngine:
     locale: str = ""
     catalog: Dnd2024CombatCatalog = field(init=False)
     spells: Dnd2024SpellCatalog = field(init=False)
+    features: Dnd2024ClassFeatureResolver = field(init=False)
 
     def __post_init__(self) -> None:
         self.catalog = Dnd2024CombatCatalog.from_bundle(self.bundle)
         self.spells = Dnd2024SpellCatalog.from_bundle(self.bundle)
+        self.features = Dnd2024ClassFeatureResolver(self.bundle)
 
     # ------------------------------------------------------------------
     # state helpers
@@ -137,6 +155,43 @@ class Dnd2024ExplorationEngine:
     # intents
     # ------------------------------------------------------------------
 
+    def _exploration_capabilities(self, canonical: dict[str, Any]) -> list[dict[str, Any]]:
+        """Exploration-safe class-feature capability projections for one character.
+
+        Only self-contained heal capabilities with no hostile-target requirement
+        are offered: exploration has no enemy actors, so attacks, damage, and
+        save-based effects cannot resolve deterministically here. The capability
+        view is reused verbatim from the combat projection (same cost labels,
+        same availability rule) so the frontend needs no feature-specific
+        rendering; only the resource part of the cost is authoritative in this
+        phase.
+        """
+
+        conditions = canonical.get("conditions") or {}
+        projections: list[dict[str, Any]] = []
+        for view in self.features.combat_capabilities(canonical, _EXPLORATION_ECONOMY):
+            if view.requires_hostile_target or not view.available:
+                continue
+            capability = self.features.declared_capability(canonical, view.id)
+            if capability is None:  # pragma: no cover - views come from declarations
+                continue
+            if (
+                capability.requires_condition
+                and capability.requires_condition not in conditions
+            ):
+                continue
+            if (
+                capability.forbidden_condition
+                and capability.forbidden_condition in conditions
+            ):
+                continue
+            if not capability.actions or any(
+                action.kind != "heal" for action in capability.actions
+            ):
+                continue
+            projections.append(view.to_dict())
+        return projections
+
     def available_intents(self, instance: Any, actor_id: str) -> list[dict[str, Any]]:
         state = self._state(instance)
         if state["combat"].get("status") == "active":
@@ -170,14 +225,23 @@ class Dnd2024ExplorationEngine:
                 "spell_ref": spell_ref, "name": spell["name"], "level": spell["level"],
                 "casting_time": spell["casting_time"], "available_slot_levels": available_slots,
             })
-        if not spells:
-            return []
-        return [{
-            "type": "exploration.cast_spell", "label": "Cast a spell",
-            "expected_version": int(state.get("version", 0) or 0),
-            "actor_id": actor_id, "spells": spells,
-            "targets": self._party_targets(instance),
-        }]
+        intents: list[dict[str, Any]] = []
+        if spells:
+            intents.append({
+                "type": "exploration.cast_spell", "label": "Cast a spell",
+                "expected_version": int(state.get("version", 0) or 0),
+                "actor_id": actor_id, "spells": spells,
+                "targets": self._party_targets(instance),
+            })
+        capabilities = self._exploration_capabilities(canonical)
+        if capabilities:
+            intents.append({
+                "type": "exploration.use_class_feature",
+                "label": "Use a class feature",
+                "expected_version": int(state.get("version", 0) or 0),
+                "actor_id": actor_id, "capabilities": capabilities,
+            })
+        return intents
 
     def validate_intent(self, instance: Any, intent: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -212,6 +276,9 @@ class Dnd2024ExplorationEngine:
             raise ExplorationIntentError(
                 "the spellcaster cannot cast while dead, at 0 HP, or incapacitated"
             )
+        if str(intent.get("type") or "") == "exploration.use_class_feature":
+            self._validate_use_class_feature(intent, actor_id, canonical)
+            return
         spell_ref = str(intent.get("spell_ref") or "")
         spell = self.spells.get(spell_ref)
         if spell is None:
@@ -272,6 +339,43 @@ class Dnd2024ExplorationEngine:
             if effect.get("target_scope") == "self" and targets != [actor_id]:
                 raise ExplorationIntentError("this spell can only target the caster")
 
+    def _validate_use_class_feature(
+        self, intent: dict[str, Any], actor_id: str, canonical: dict[str, Any],
+    ) -> None:
+        capability_id = str(intent.get("capability_id") or "")
+        if not capability_id:
+            raise ExplorationIntentError("capability_id is required")
+        capability = self.features.declared_capability(canonical, capability_id)
+        if capability is None:
+            raise ExplorationIntentError(
+                "class capability is not available to this actor"
+            )
+        # 投影层的安全过滤在这里重新执行：伪造 payload 里的攻击/敌对目标能力
+        # 不能因为"声明存在"就通过。
+        if capability.requires_hostile_target or not capability.actions or any(
+            action.kind != "heal" for action in capability.actions
+        ):
+            raise ExplorationIntentError(
+                "this class capability has no exploration-safe effect"
+            )
+        conditions = canonical.get("conditions") or {}
+        if capability.requires_condition and capability.requires_condition not in conditions:
+            raise ExplorationIntentError(
+                "this class capability requires a condition the actor does not hold"
+            )
+        if capability.forbidden_condition and capability.forbidden_condition in conditions:
+            raise ExplorationIntentError(
+                "this class capability is blocked by a condition on the actor"
+            )
+        for resource_cost in capability.cost.resources:
+            definition = self.features.class_resource_definition(
+                canonical, resource_cost.resource_id,
+            )
+            if definition is None or int(definition.current) < resource_cost.amount:
+                raise ExplorationIntentError(
+                    "not enough class resources for this capability"
+                )
+
     def resolve_intent(
         self, instance: Any, intent: dict[str, Any], rng: Any,
     ) -> dict[str, Any]:
@@ -280,6 +384,8 @@ class Dnd2024ExplorationEngine:
         except ExplorationIntentError as exc:
             return {"ok": False, "code": "INVALID_INTENT", "error": str(exc)}
         actor_id = str(intent["actor_id"])
+        if str(intent.get("type") or "") == "exploration.use_class_feature":
+            return self._resolve_use_class_feature(instance, intent, rng, actor_id)
         spell_ref = str(intent["spell_ref"])
         spell = self.spells.get(spell_ref)
         if spell is None:  # pragma: no cover - validation guards this
@@ -375,14 +481,82 @@ class Dnd2024ExplorationEngine:
         batch = self._batch(intent_id, expected, events)
         return {"ok": True, "events": events, "event_batch": batch}
 
+    def _resolve_use_class_feature(
+        self, instance: Any, intent: dict[str, Any], rng: Any, actor_id: str,
+    ) -> dict[str, Any]:
+        canonical = self._canonical_of(instance, actor_id)
+        capability_id = str(intent["capability_id"])
+        capability = self.features.declared_capability(canonical, capability_id)
+        if capability is None:  # pragma: no cover - validation guards this
+            raise ExplorationIntentError(
+                "class capability is not available to this actor"
+            )
+        events: list[dict[str, Any]] = [{
+            "type": "intent.submitted", "intent_type": "exploration.use_class_feature",
+            "actor_id": actor_id, "submitted_by": str(intent.get("submitted_by") or ""),
+        }]
+        expected = int(intent["expected_version"])
+        intent_id = str(intent.get("intent_id") or "")
+        # 探索态没有动作经济可扣：附赠动作等成本不结算，职业资源是唯一门槛。
+        for resource_cost in capability.cost.resources:
+            events.append({
+                "type": "dnd2024.class_resource.spent", "actor_id": actor_id,
+                "resource_id": resource_cost.resource_id,
+                "amount": resource_cost.amount,
+            })
+        events.append({
+            "type": "dnd2024.class_feature.used", "actor_id": actor_id,
+            "capability_id": capability_id, "feature_id": capability.feature_id,
+            "context": "exploration",
+        })
+        for action in capability.actions:
+            if action.kind != "heal":  # pragma: no cover - validation guards this
+                continue
+            # 特性声明的治疗骰 + 等级加值；公式与事件形状和战斗内 heal 分支一致。
+            dice = str(self.features.feature_value(
+                canonical, capability.feature_id, "heal_dice", "",
+            ) or "")
+            bonus = int(self.features.feature_value(
+                canonical, capability.feature_id, "heal_bonus", 0,
+            ) or 0)
+            healing_node = formula_node_from_dice_formula(dice)
+            if bonus:
+                healing_node = {"op": "add", "args": [
+                    healing_node, {"op": "constant", "value": bonus},
+                ]}
+            healing, rolls = roll_damage_node(healing_node, rng)
+            healing = max(1, healing)
+            blocked = "cannot_regain_hp" in (canonical.get("conditions") or {})
+            resources = canonical.get("resources") or {}
+            before = int(resources.get("hp", 0) or 0)
+            maximum = int(resources.get("max_hp", 0) or 0)
+            events.append({
+                "type": "resource.changed", "resource": "hp", "target_id": actor_id,
+                "delta": 0 if blocked else healing,
+                "amount": 0 if blocked else healing,
+                "healing": True, "rolls": rolls,
+                "hp_after": min(maximum, before + (0 if blocked else healing)),
+                **({"blocked_by": "cannot_regain_hp"} if blocked else {}),
+            })
+        return {
+            "ok": True, "events": events,
+            "event_batch": self._batch(
+                intent_id, expected, events,
+                intent_type="exploration.use_class_feature",
+            ),
+        }
+
     @staticmethod
-    def _batch(intent_id: str, expected: int, events: list[dict[str, Any]]) -> dict[str, Any]:
+    def _batch(
+        intent_id: str, expected: int, events: list[dict[str, Any]],
+        *, intent_type: str = "exploration.cast_spell",
+    ) -> dict[str, Any]:
         return {
             "batch_id": stable_batch_id(
                 {"intent_id": intent_id, "expected_version": expected}, expected,
             ),
             "intent_id": intent_id,
-            "intent_type": "exploration.cast_spell",
+            "intent_type": intent_type,
             "expected_version": expected,
             "result_version": expected + 1,
             "events": events,
@@ -442,7 +616,10 @@ class Dnd2024ExplorationEngine:
 
     def _reduce_event(self, snapshot: dict[str, Any], event: dict[str, Any]) -> None:
         event_type = str(event["type"])
-        if event_type in {"intent.submitted", "dnd2024.spell.cast", "dnd2024.spell.narrative"}:
+        if event_type in {
+            "intent.submitted", "dnd2024.spell.cast", "dnd2024.spell.narrative",
+            "dnd2024.class_feature.used",
+        }:
             return
         if event_type == "dnd2024.character.revived":
             # 探索态没有 combat state，但 P9 的状态语义仍然适用：仅 player、
@@ -471,6 +648,34 @@ class Dnd2024ExplorationEngine:
             if int(slots.get(level, 0) or 0) < 1:
                 raise EventBatchError("spell slot is already spent")
             slots[level] -= 1
+            return
+        if event_type == "dnd2024.class_resource.spent":
+            # 与战斗 reducer 同一语义：职业资源只写既有 canonical
+            # resources.class 结构，不允许扣成负数。
+            kind, raw_id = str(event["actor_id"]).split(":", 1)
+            if kind not in {"player", "companion"}:
+                raise EventBatchError(
+                    "only player/companion class resources are canonical"
+                )
+            character = (
+                snapshot["characters"][raw_id]
+                if kind == "player"
+                else self._companion_canonical(snapshot, raw_id)
+            )
+            resource_id = str(event["resource_id"])
+            class_state = character.setdefault("resources", {}).setdefault("class", {})
+            state = class_state.get(resource_id)
+            if not isinstance(state, dict):
+                raise EventBatchError(
+                    f"class resource is not initialized: {resource_id}"
+                )
+            current = int(state.get("current", 0) or 0)
+            amount = int(event.get("amount", 1) or 1)
+            if current < amount:
+                raise EventBatchError(
+                    f"class resource is already spent: {resource_id}"
+                )
+            state["current"] = current - amount
             return
         if event_type == "dnd2024.concentration.started":
             kind, raw_id = str(event["actor_id"]).split(":", 1)

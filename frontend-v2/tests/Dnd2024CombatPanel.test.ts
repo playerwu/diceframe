@@ -503,6 +503,42 @@ describe('D&D 2024 combat panel', () => {
     unavailable.unmount()
   })
 
+  it('offers exploration class features out of combat and submits only the capability id', async () => {
+    const data = response('none') as any
+    data.available_actions = [{
+      type: 'exploration.use_class_feature', label: 'Use a class feature',
+      actor_id: 'player:gm', expected_version: 0,
+      capabilities: [{
+        capability_id: 'second_wind', feature_id: 'second_wind', label: 'Second Wind',
+        available: true, blocked_reason: '', requires_target: false,
+        costs: [
+          { kind: 'bonus_action', name: 'Bonus Action', amount: 1, current: 1, maximum: 1 },
+          { kind: 'resource', name: 'Second Wind', amount: 1, current: 2, maximum: 2 },
+        ],
+      }],
+    }]
+    mocks.fetch.mockReset().mockResolvedValue(data)
+    mocks.submit.mockReset().mockResolvedValue(data)
+    const wrapper = mount(Dnd2024CombatPanel, {
+      props: { gameKey: 'web|combat|bot', actorId: 'gm', isGm: true },
+    })
+    await flushPromises()
+
+    const section = wrapper.get('[data-testid="exploration-features"]')
+    expect(section.text()).toContain('Second Wind')
+    expect(section.text()).toContain('Second Wind 1（2/2）')
+    await section.get('[data-capability="second_wind"]').trigger('click')
+    await flushPromises()
+    expect(mocks.submit).toHaveBeenCalledOnce()
+    expect(mocks.submit.mock.calls[0][1]).toMatchObject({
+      type: 'exploration.use_class_feature',
+      actor_id: 'player:gm',
+      capability_id: 'second_wind',
+      expected_version: 0,
+    })
+    wrapper.unmount()
+  })
+
   it('keeps the catalog hidden in a fresh game and starts from a server-provided preset after explicit preparation', async () => {
     const wrapper = mount(Dnd2024CombatPanel, {
       props: { gameKey: 'web|combat|bot', actorId: 'gm', isGm: true },

@@ -305,7 +305,9 @@ def test_multiplayer_encounter_readiness_is_authoritative_and_visible_to_gm() ->
     }) is True
 
     ally_actions = runtime.available_intents(instance, "ally")
-    assert [item["type"] for item in ally_actions] == ["encounter.ready"]
+    # 探索施法在战斗请求 pending 时仍然可用（裸 uid 规范化修复后不再隐形）；
+    # 这里只断言本测试关心的 readiness 意图在列表中。
+    assert "encounter.ready" in [item["type"] for item in ally_actions]
     assert any(item["type"] == "combat.start" for item in runtime.available_intents(instance, "gm"))
 
     _submit(runtime, instance, "encounter.ready", "ally")
@@ -315,8 +317,8 @@ def test_multiplayer_encounter_readiness_is_authoritative_and_visible_to_gm() ->
         "ready_count": 1, "required_count": 1, "all_ready": True,
         "players": [{"player_id": "ally", "name": "Mira", "ready": True}],
     }
-    assert [item["type"] for item in runtime.available_intents(instance, "ally")] == [
-        "encounter.unready",
+    assert "encounter.unready" in [
+        item["type"] for item in runtime.available_intents(instance, "ally")
     ]
 
     _submit(runtime, instance, "encounter.unready", "ally")

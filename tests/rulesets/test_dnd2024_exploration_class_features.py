@@ -278,3 +278,19 @@ def test_feature_intent_accepts_raw_actor_id_submission():
     canonical = _canonical(instance)
     assert canonical["resources"]["hp"] == 12
     assert canonical["resources"]["class"]["second_wind"]["current"] == 1
+
+
+def test_apply_batch_mirrors_canonical_hp_into_the_legacy_sheet():
+    # 外层 UI 读 legacy sheet 字段；canonical 只写不镜像会表现为
+    # 「结算成功但界面 HP 不动」。
+    _, instance, engine = _instance(hp=4)
+    result = _use(engine, instance, FixedRng(10))
+    engine.apply_batch(instance, result["event_batch"])
+    sheet = instance.players["gm"]["character_sheet"]
+    canonical = sheet["ruleset_character"]
+    assert sheet["hp"] == canonical["resources"]["hp"] == 12
+    assert sheet["max_hp"] == canonical["resources"]["max_hp"] == 12
+    second_wind_row = next(
+        row for row in sheet["class_resources"] if row["id"] == "second_wind"
+    )
+    assert second_wind_row["current"] == 1

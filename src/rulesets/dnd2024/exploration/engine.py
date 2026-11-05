@@ -621,6 +621,7 @@ class Dnd2024ExplorationEngine:
                     continue
                 sheet = deepcopy(instance.get_character_sheet(uid))
                 sheet["ruleset_character"] = deepcopy(canonical)
+                self._mirror_legacy_sheet(sheet, canonical)
                 instance.set_character_sheet(uid, sheet)
             ruleset_runtime.replace_event_ledger(instance, ledger)
         return {
@@ -740,6 +741,23 @@ class Dnd2024ExplorationEngine:
         ):
             raise EventBatchError("companion canonical character is missing")
         return companion["ruleset_character"]
+
+    def _mirror_legacy_sheet(self, sheet: dict[str, Any], canonical: dict[str, Any]) -> None:
+        """§28：legacy / public mirror 与 canonical 保持一致。
+
+        队伍卡等外层 UI 读 legacy 字段，而权威批次只写 canonical；不回写
+        镜像就会出现「结算成功但界面不动」。镜像范围限定为本引擎事件可能
+        改变的字段：HP、状态、施法资源与职业特性/资源投影（与
+        ``build_llm_view`` 的镜像集一致）。
+        """
+
+        resources = canonical.get("resources") or {}
+        sheet["hp"] = int(resources.get("hp", 0) or 0)
+        sheet["max_hp"] = int(resources.get("max_hp", 0) or 0)
+        sheet["conditions"] = deepcopy(canonical.get("conditions") or {})
+        if isinstance(canonical.get("spellcasting"), dict):
+            sheet["spellcasting"] = deepcopy(canonical["spellcasting"])
+        sheet.update(self.features.projection_fields(canonical))
 
     def _conditions(self, snapshot: dict[str, Any], actor_id: str) -> dict[str, Any]:
         kind, raw_id = actor_id.split(":", 1)
